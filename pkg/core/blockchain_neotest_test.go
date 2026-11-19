@@ -1484,6 +1484,11 @@ func TestBlockchain_VerifyTx(t *testing.T) {
 		err := bc.VerifyTx(tx)
 		require.ErrorIs(t, err, expectedErr)
 	}
+	calculateFee := func(bc *core.Blockchain, script []byte) (int64, int) {
+		return fee.Calculate(bc.GetBaseExecFee(), script, func(hf config.Hardfork) bool {
+			return bc.IsHardforkEnabled(&hf, bc.BlockHeight()+1)
+		})
+	}
 
 	testScript := []byte{byte(opcode.PUSH1)}
 	newTestTx := func(t *testing.T, signer util.Uint160, script []byte) *transaction.Transaction {
@@ -1550,7 +1555,7 @@ func TestBlockchain_VerifyTx(t *testing.T) {
 		})
 		t.Run("AlmostEnoughNetworkFee", func(t *testing.T) {
 			tx := newTestTx(t, h, testScript)
-			verificationNetFee, calcultedScriptSize := fee.Calculate(bc.GetBaseExecFee(), accs[0].Contract.Script)
+			verificationNetFee, calcultedScriptSize := calculateFee(bc, accs[0].Contract.Script)
 			expectedSize := io.GetVarSize(tx) + calcultedScriptSize
 			calculatedNetFee := verificationNetFee + int64(expectedSize)*bc.FeePerByte()
 			tx.NetworkFee = calculatedNetFee - 1
@@ -1560,7 +1565,7 @@ func TestBlockchain_VerifyTx(t *testing.T) {
 		})
 		t.Run("EnoughNetworkFee", func(t *testing.T) {
 			tx := newTestTx(t, h, testScript)
-			verificationNetFee, calcultedScriptSize := fee.Calculate(bc.GetBaseExecFee(), accs[0].Contract.Script)
+			verificationNetFee, calcultedScriptSize := calculateFee(bc, accs[0].Contract.Script)
 			expectedSize := io.GetVarSize(tx) + calcultedScriptSize
 			calculatedNetFee := verificationNetFee + int64(expectedSize)*bc.FeePerByte()
 			tx.NetworkFee = calculatedNetFee
@@ -1571,7 +1576,7 @@ func TestBlockchain_VerifyTx(t *testing.T) {
 		t.Run("CalculateNetworkFee, signature script", func(t *testing.T) {
 			tx := newTestTx(t, h, testScript)
 			expectedSize := io.GetVarSize(tx)
-			verificationNetFee, calculatedScriptSize := fee.Calculate(bc.GetBaseExecFee(), accs[0].Contract.Script)
+			verificationNetFee, calculatedScriptSize := calculateFee(bc, accs[0].Contract.Script)
 			expectedSize += calculatedScriptSize
 			expectedNetFee := verificationNetFee + int64(expectedSize)*bc.FeePerByte()
 			tx.NetworkFee = expectedNetFee
@@ -1589,7 +1594,7 @@ func TestBlockchain_VerifyTx(t *testing.T) {
 			require.NoError(t, multisigAcc.ConvertMultisig(1, pKeys))
 			multisigHash := hash.Hash160(multisigAcc.Contract.Script)
 			tx := newTestTx(t, multisigHash, testScript)
-			verificationNetFee, calculatedScriptSize := fee.Calculate(bc.GetBaseExecFee(), multisigAcc.Contract.Script)
+			verificationNetFee, calculatedScriptSize := calculateFee(bc, multisigAcc.Contract.Script)
 			expectedSize := io.GetVarSize(tx) + calculatedScriptSize
 			expectedNetFee := verificationNetFee + int64(expectedSize)*bc.FeePerByte()
 			tx.NetworkFee = expectedNetFee
@@ -1717,7 +1722,7 @@ func TestBlockchain_VerifyTx(t *testing.T) {
 			}}
 			rawScript := committee.Script()
 			size := io.GetVarSize(tx)
-			netFee, sizeDelta := fee.Calculate(bc.GetBaseExecFee(), rawScript)
+			netFee, sizeDelta := calculateFee(bc, rawScript)
 			tx.NetworkFee += netFee
 			tx.NetworkFee += int64(size+sizeDelta) * bc.FeePerByte()
 			tx.Scripts = []transaction.Witness{{
@@ -1766,7 +1771,7 @@ func TestBlockchain_VerifyTx(t *testing.T) {
 					Scopes:  transaction.None,
 				}}
 				size := io.GetVarSize(tx)
-				netFee, sizeDelta := fee.Calculate(bc.GetBaseExecFee(), oracleScript)
+				netFee, sizeDelta := calculateFee(bc, oracleScript)
 				tx.NetworkFee += netFee
 				tx.NetworkFee += int64(size+sizeDelta) * bc.FeePerByte()
 				return tx
@@ -1854,7 +1859,7 @@ func TestBlockchain_VerifyTx(t *testing.T) {
 				}}
 				size := io.GetVarSize(tx)
 				rawScript := e.Validator.Script()
-				netFee, sizeDelta := fee.Calculate(e.Chain.GetBaseExecFee(), rawScript)
+				netFee, sizeDelta := calculateFee(e.Chain, rawScript)
 				tx.NetworkFee += netFee
 				tx.NetworkFee += int64(size+sizeDelta) * e.Chain.FeePerByte()
 				tx.Scripts = []transaction.Witness{{
@@ -1894,7 +1899,7 @@ func TestBlockchain_VerifyTx(t *testing.T) {
 				}}
 				rawScript := e.Validator.Script()
 				size := io.GetVarSize(tx)
-				netFee, sizeDelta := fee.Calculate(e.Chain.GetBaseExecFee(), rawScript)
+				netFee, sizeDelta := calculateFee(e.Chain, rawScript)
 				tx.NetworkFee += netFee
 				tx.NetworkFee += int64(size+sizeDelta) * e.Chain.FeePerByte()
 				tx.Scripts = []transaction.Witness{{
@@ -1937,7 +1942,7 @@ func TestBlockchain_VerifyTx(t *testing.T) {
 				}}
 				rawScript := e.Validator.Script()
 				size := io.GetVarSize(tx)
-				netFee, sizeDelta := fee.Calculate(e.Chain.GetBaseExecFee(), rawScript)
+				netFee, sizeDelta := calculateFee(e.Chain, rawScript)
 				tx.NetworkFee += netFee
 				tx.NetworkFee += int64(size+sizeDelta) * e.Chain.FeePerByte()
 				tx.Scripts = []transaction.Witness{{
@@ -2279,7 +2284,7 @@ func TestBlockchain_VerifyTx(t *testing.T) {
 				}
 				rawScript := committee.Script()
 				size := io.GetVarSize(tx)
-				netFee, sizeDelta := fee.Calculate(e.Chain.GetBaseExecFee(), rawScript)
+				netFee, sizeDelta := calculateFee(e.Chain, rawScript)
 				tx.NetworkFee += netFee
 				tx.NetworkFee += int64(size+sizeDelta) * e.Chain.FeePerByte()
 				tx.Scripts = []transaction.Witness{
@@ -2513,7 +2518,7 @@ func TestBlockchain_VerifyTx(t *testing.T) {
 				},
 			}
 			size := io.GetVarSize(tx)
-			netFee, sizeDelta := fee.Calculate(bc.GetBaseExecFee(), validator.Script())
+			netFee, sizeDelta := calculateFee(bc, validator.Script())
 			tx.NetworkFee = netFee + // multisig witness verification price
 				int64(size)*bc.FeePerByte() + // fee for unsigned size
 				int64(sizeDelta)*bc.FeePerByte() + // fee for multisig size
