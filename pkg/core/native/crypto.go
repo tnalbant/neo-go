@@ -147,7 +147,10 @@ func newCrypto() *Crypto {
 	desc = NewDescriptor("recoverSecp256K1", smartcontract.ByteArrayType,
 		manifest.NewParameter("messageHash", smartcontract.ByteArrayType),
 		manifest.NewParameter("signature", smartcontract.ByteArrayType))
-	md = NewMethodAndPrice(c.recoverSecp256K1, 1<<15, callflag.NoneFlag, config.HFEchidna)
+	md = NewMethodAndPrice(c.recoverSecp256K1V0, 1<<15, callflag.NoneFlag, config.HFEchidna, config.HFHuyao)
+	c.AddMethod(md, desc)
+
+	md = NewMethodAndPrice(c.recoverSecp256K1V1, 1<<15, callflag.NoneFlag, config.HFHuyao)
 	c.AddMethod(md, desc)
 	return c
 }
@@ -286,7 +289,15 @@ func (c *Crypto) verifyWithEd25519Generic(_ *interop.Context, args []stackitem.I
 	return stackitem.NewBool(ed25519.Verify(pubkey, msg, signature))
 }
 
-func (c *Crypto) recoverSecp256K1(_ *interop.Context, args []stackitem.Item) stackitem.Item {
+func (c *Crypto) recoverSecp256K1V0(_ *interop.Context, args []stackitem.Item) stackitem.Item {
+	return recoverSecp256K1Generic(args, false)
+}
+
+func (c *Crypto) recoverSecp256K1V1(_ *interop.Context, args []stackitem.Item) stackitem.Item {
+	return recoverSecp256K1Generic(args, true)
+}
+
+func recoverSecp256K1Generic(args []stackitem.Item, checkRS bool) stackitem.Item {
 	msgH, err := args[0].TryBytes()
 	if err != nil {
 		panic(fmt.Errorf("invalid message hash stackitem: %w", err))
@@ -311,11 +322,62 @@ func (c *Crypto) recoverSecp256K1(_ *interop.Context, args []stackitem.Item) sta
 	if canonical[0] > 30 {
 		return stackitem.Null{}
 	}
-	pub, _, err := ecdsa.RecoverCompact(canonical, msgH)
-	if err != nil {
+	var pub *secp256k1.PublicKey
+	if checkRS {
+		pub, _, _ = ecdsa.RecoverCompact(canonical, msgH)
+	} else {
+		pub = recoverCompactUnchecked(canonical, msgH)
+	}
+	if pub == nil {
 		return stackitem.Null{}
 	}
 	return stackitem.NewByteArray(pub.SerializeCompressed())
+}
+
+// recoverCompactUnchecked recovers public key from the canonical signature
+// (with recovery ID in 27..30 range) like [ecdsa.RecoverCompact] does, but
+// accepts zero S and R/S values that are not less than the group order the
+// same way C# node's ECRecoverV0 does. It returns nil if recovery fails.
+func recoverCompactUnchecked(signature, hash []byte) *secp256k1.PublicKey {
+	var (
+		recID   = signature[0] - 27
+		params  = secp256k1.Params()
+		r, s, e secp256k1.ModNScalar
+	)
+	r.SetByteSlice(signature[1:33])
+	if r.IsZero() { // R is either 0 or N, no inverse exists.
+		return nil
+	}
+	s.SetByteSlice(signature[33:])
+	e.SetByteSlice(hash)
+
+	x := new(big.Int).SetBytes(signature[1:33])
+	if recID&2 != 0 {
+		x.Add(x, params.N)
+	}
+	if x.Cmp(params.P) >= 0 {
+		return nil
+	}
+	var R secp256k1.JacobianPoint
+	R.X.SetByteSlice(x.Bytes())
+	if !secp256k1.DecompressY(&R.X, recID&1 != 0, &R.Y) {
+		return nil
+	}
+	R.Z.SetInt(1)
+
+	w := new(secp256k1.ModNScalar).InverseValNonConst(&r)
+	u1 := new(secp256k1.ModNScalar).Mul2(&e, w).Negate()
+	u2 := new(secp256k1.ModNScalar).Mul2(&s, w)
+
+	var q, u1G, u2R secp256k1.JacobianPoint
+	secp256k1.ScalarBaseMultNonConst(u1, &u1G)
+	secp256k1.ScalarMultNonConst(u2, &R, &u2R)
+	secp256k1.AddNonConst(&u1G, &u2R, &q)
+	if (q.X.IsZero() && q.Y.IsZero()) || q.Z.IsZero() {
+		return nil
+	}
+	q.ToAffine()
+	return secp256k1.NewPublicKey(&q.X, &q.Y)
 }
 
 // koblitzSigToCanonical converts compact Secp256K1 signature representation

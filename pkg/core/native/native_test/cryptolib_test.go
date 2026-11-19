@@ -563,11 +563,6 @@ func TestCryptoLib_RecoverSecp256K1_Compat(t *testing.T) {
 			msgH: "586052916fb6f746e1d417766cceffbe1baf95579bab67ad49addaaa6e798862",
 			sig:  "ff0ea79d4a476276e4b067facdec7460d2c98c8a65326a6e5c998fd7c65061140e45aea5034af973410e65cf97651b3f2b976e3fc79c6a93065ed7cb69a2ab5a01",
 		},
-		{
-			// Wrong signature (zero S).
-			msgH: "586052916fb6f746e1d417766cceffbe1baf95579bab67ad49addaaa6e798862",
-			sig:  "4e0ea79d4a476276e4b067facdec7460d2c98c8a65326a6e5c998fd7c6506114000000000000000000000000000000000000000000000000000000000000000001",
-		},
 	} {
 		msgH, err := hex.DecodeString(tc.msgH)
 		require.NoError(t, err)
@@ -641,6 +636,65 @@ func TestCryptoLib_RecoverSecp256K1_EIP2098Compat(t *testing.T) {
 		committeeInvoker.Invoke(t, pubBytes, "recoverSecp256K1", msgH, sigExpanded)
 		committeeInvoker.Invoke(t, pubBytes, "recoverSecp256K1", msgH, sigCompact)
 	}
+}
+
+func TestCryptoLib_RecoverSecp256K1_Huyao(t *testing.T) {
+	const (
+		msgH = "586052916fb6f746e1d417766cceffbe1baf95579bab67ad49addaaa6e798862"
+		r    = "4e0ea79d4a476276e4b067facdec7460d2c98c8a65326a6e5c998fd7c6506114"
+		s    = "0e45aea5034af973410e65cf97651b3f2b976e3fc79c6a93065ed7cb69a2ab5a"
+		n    = "fffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141"
+		p    = "fffffffffffffffffffffffffffffffffffffffffffffffffffffffefffffc2f"
+		// nPlus2 is the smallest value above N that is a valid X coordinate.
+		nPlus2 = "fffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364143"
+	)
+	type testCase struct {
+		name string
+		sig  string
+		// preHuyao is the public key expected before Huyao, invalid R/S
+		// always lead to Null after it.
+		preHuyao string
+	}
+	testCases := []testCase{
+		{"zero S", r + strings.Repeat("00", 32) + "01", "035d9b0b3c2dd438225f68f3d8be257f7b7e2923fe3a3058e05b7bf4a56e2566ea"},
+		{"S equals N", r + n + "01", "035d9b0b3c2dd438225f68f3d8be257f7b7e2923fe3a3058e05b7bf4a56e2566ea"},
+		{"S above N", r + "fffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364142" + "01", "022604d05273b8a07f6a34e22c567693088ec068133cbd91c71a9759d90cfe014a"},
+		{"R above N, recID 0", nPlus2 + s + "00", "0379f76c2345874095641c1503c02cd2e0a934a8893d6fb8e4c60b37ced89127a5"},
+		{"R above N, recID 1", nPlus2 + s + "01", "02dc09134835e30e1abc012462215203e1a52463bcc5d0ccf85f8a5d8b09f5338f"},
+		{"R above N, recID 2", nPlus2 + s + "02", ""},
+		{"R equals P", p + s + "01", ""},
+		{"zero R", strings.Repeat("00", 32) + s + "01", ""},
+		{"R equals N", n + s + "01", ""},
+	}
+	check := func(t *testing.T, huyaoH uint32) {
+		c := newCustomNativeClient(t, nativenames.CryptoLib, func(cfg *config.Blockchain) {
+			cfg.Hardforks = map[string]uint32{
+				config.HFHuyao.String(): huyaoH,
+			}
+		})
+		committeeInvoker := c.WithSigners(c.Committee)
+		h, err := hex.DecodeString(msgH)
+		require.NoError(t, err)
+		for _, tc := range testCases {
+			t.Run(tc.name, func(t *testing.T) {
+				sig, err := hex.DecodeString(tc.sig)
+				require.NoError(t, err)
+				var expected any = stackitem.Null{}
+				if huyaoH > 0 && tc.preHuyao != "" {
+					expected, err = hex.DecodeString(tc.preHuyao)
+					require.NoError(t, err)
+				}
+				committeeInvoker.Invoke(t, expected, "recoverSecp256K1", h, sig)
+			})
+		}
+	}
+
+	t.Run("pre-Huyao", func(t *testing.T) {
+		check(t, 100)
+	})
+	t.Run("post-Huyao", func(t *testing.T) {
+		check(t, 0)
+	})
 }
 
 func TestCryptoLib_VerifyWithED25519_Gorgon(t *testing.T) {

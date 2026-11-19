@@ -11,6 +11,8 @@ import (
 	"testing"
 
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
+	"github.com/decred/dcrd/dcrec/secp256k1/v4"
+	"github.com/decred/dcrd/dcrec/secp256k1/v4/ecdsa"
 	"github.com/nspcc-dev/neo-go/pkg/core/interop"
 	"github.com/nspcc-dev/neo-go/pkg/crypto/hash"
 	"github.com/nspcc-dev/neo-go/pkg/crypto/keys"
@@ -319,11 +321,11 @@ func TestCryptoLib_RecoverSecp256K1(t *testing.T) {
 		}
 		if isErr {
 			require.Panics(t, func() {
-				_ = c.recoverSecp256K1(ic, argsArr)
+				_ = c.recoverSecp256K1V1(ic, argsArr)
 			})
 		} else {
 			require.NotPanics(t, func() {
-				actual = c.recoverSecp256K1(ic, argsArr)
+				actual = c.recoverSecp256K1V1(ic, argsArr)
 			})
 			require.Equal(t, stackitem.Make(expected), actual)
 		}
@@ -349,6 +351,20 @@ func TestCryptoLib_RecoverSecp256K1(t *testing.T) {
 	t.Run("success", func(t *testing.T) {
 		runCase(t, false, pub, msgH, sig)
 	})
+}
+
+func TestRecoverCompactUnchecked(t *testing.T) {
+	for i := range byte(16) {
+		priv := secp256k1.PrivKeyFromBytes([]byte{i + 1})
+		msgH := hash.Sha256([]byte{i}).BytesBE()
+		sig := ecdsa.SignCompact(priv, msgH, false)
+
+		expected, _, err := ecdsa.RecoverCompact(sig, msgH)
+		require.NoError(t, err)
+		actual := recoverCompactUnchecked(sig, msgH)
+		require.NotNil(t, actual)
+		require.Equal(t, expected.SerializeCompressed(), actual.SerializeCompressed())
+	}
 }
 
 func TestCryptolib_ScalarFromBytes_Compat(t *testing.T) {
